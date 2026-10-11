@@ -10,7 +10,7 @@ import { getPosterCandidates } from '@/lib/imageProxy';
  * 解决三个实际问题：
  * 1. 豆瓣图床（img*.doubanio.com）会校验 Referer —— 无 Referer 时直接 418，
  *    图片加载失败留下空白/灰块。这里走 imageProxy 提供的候选链逐级降级：
- *    镜像 CDN 直连（不经本站服务器）→ 本站 /api/image-proxy 代理 → 原图。
+ *    本站 /api/image-proxy 代理 → 原图。
  * 2. 原实现只有 onLoadingComplete，加载失败时永远停留在骨架屏 —— 这里增加 onError
  *    逐个降级，并在全部失败后进入可见的占位态而非永久白块。
  * 3. Selene 等 WebView 对 next/image 的优化链路兼容性差 —— 统一改用原生 img，
@@ -41,7 +41,7 @@ export default function PosterImage({
 
   /**
    * 候选地址队列，按优先级排列（由 imageProxy 统一给出）：
-   * - 豆瓣图床：镜像 CDN 直连 → 本站代理 → 原图
+   * - 豆瓣图床：本站代理 → 原图
    * - 其他图床：原图 → 本站代理（应对直连被墙/防盗链）
    */
   const candidates = useMemo(() => getPosterCandidates(src), [src]);
@@ -108,7 +108,7 @@ export default function PosterImage({
       alt={alt}
       loading='lazy'
       decoding='async'
-      // 镜像 CDN 与本站代理都不需要 Referer；原图兜底时本就会失败，故统一不带
+      // 本站代理会自带 Referer；原图兜底时本就会失败，故统一不带
       referrerPolicy='no-referrer'
       onLoad={handleLoad}
       onError={handleError}
