@@ -149,17 +149,16 @@ export class D1Storage implements IStorage {
       this.db = getD1Database();
     }
 
-    // ⚠️ 原实现把 initDatabase() 放在 `if (!this.db)` 里面：
-    // 一旦建表失败，this.db 依然是真值（对象已存在），**后续请求永远不会再尝试建表**，
-    // 于是这个 isolate 会一直报 "no such table"，而全新的 isolate 又能正常建表 ——
-    // 外在表现正是「大部分时候打不开、偶尔才能打开」。这里把初始化独立出来并允许重试。
     if (!this.initialized) {
+      // 先置位：保证初始化失败也不会让后续请求反复重试
+      this.initialized = true;
       try {
         await this.initDatabase();
-        this.initialized = true;
       } catch (err) {
-        this.initialized = false;
-        throw err;
+        // ⚠️ 建表失败**绝不能**让请求失败：
+        // 表可能已经存在（例如已在 D1 控制台手动执行过建表 SQL），
+        // 真正的查询问题会在后面的查询里自然暴露，并带上明确的错误信息。
+        console.error('D1 初始化失败（继续尝试查询）:', err);
       }
     }
 
@@ -167,13 +166,36 @@ export class D1Storage implements IStorage {
   }
 
   private async initDatabase() {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
     try {
-      if (this.db) {
-        await this.db.exec(INIT_SQL);
-      }
+      await db.exec(INIT_SQL);
+      return;
     } catch (err) {
-      console.error('Failed to initialize D1 database:', err);
-      throw err;
+      // D1 的 exec() 对多语句批处理比较挑剔；失败时逐条执行兜底，
+      // 同时把出错的具体语句打进日志，便于定位。
+      console.error('D1 exec(INIT_SQL) 失败，改为逐条执行:', err);
+    }
+
+    const statements = INIT_SQL.split(';')
+      .map((sql) =>
+        sql
+          .split('\n')
+          .filter((line) => !line.trim().startsWith('--'))
+          .join('\n')
+          .trim()
+      )
+      .filter(Boolean);
+
+    for (const statement of statements) {
+      try {
+        await db.prepare(statement).run();
+      } catch (err) {
+        console.error(`D1 建表语句执行失败: ${statement}`, err);
+      }
     }
   }
 
