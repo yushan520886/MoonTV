@@ -1,5 +1,4 @@
 import { CheckCircle, Heart, Link, PlayCircleIcon } from 'lucide-react';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -7,6 +6,7 @@ import { deletePlayRecord, isFavorited, toggleFavorite } from '@/lib/db.client';
 import { SearchResult } from '@/lib/types';
 
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
+import PosterImage from '@/components/PosterImage';
 
 interface VideoCardProps {
   id?: string;
@@ -240,17 +240,11 @@ export default function VideoCard({
           <ImagePlaceholder aspectRatio='aspect-[2/3] transition-opacity duration-500 ease-out' />
         )}
 
-        {/* 图片加载动画 - 改进淡入和锐化效果 */}
-        <Image
+        {/* 图片加载动画 - 走 PosterImage（自动对豆瓣图走本站代理 + 失败降级） */}
+        <PosterImage
           src={actualPoster}
           alt={actualTitle}
-          fill
-          className={`object-cover transition-all duration-700 ease-out ${
-            isLoaded ? 'opacity-100 blur-0' : 'opacity-0 blur-md'
-          }`}
-          onLoadingComplete={() => setIsLoaded(true)}
-          referrerPolicy='no-referrer'
-          priority={false}
+          onSettled={() => setIsLoaded(true)}
         />
 
         {/* 悬浮层 - 改进渐变和元素过渡 */}

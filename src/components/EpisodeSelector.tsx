@@ -9,6 +9,7 @@ import React, {
   useState,
 } from 'react';
 
+import { proxyImageIfNeeded } from '@/lib/imageProxy';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8 } from '@/lib/utils';
 
@@ -448,7 +449,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                         <div className='flex-shrink-0 w-12 h-20 bg-gray-300 dark:bg-gray-600 rounded overflow-hidden'>
                           {source.episodes && source.episodes.length > 0 && (
                             <img
-                              src={source.poster}
+                              src={proxyImageIfNeeded(source.poster)}
                               alt={source.title}
                               className='w-full h-full object-cover'
                               onError={(e) => {
