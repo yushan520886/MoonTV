@@ -2,10 +2,28 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import { ADMIN_GATE_COOKIE, adminGateHash } from '@/lib/adminGate';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // ★ 后台门禁：设置了 ADMIN_PASSWORD 时，后台接口必须带门禁 Cookie。
+  //   /admin 页面本身放行 —— 它是客户端渲染，拿到 403 后会自己显示密码输入框。
+  //   /api/admin/gate 是「输入密码换 Cookie」的入口，必须放行，否则鸡生蛋。
+  //   不设置 ADMIN_PASSWORD 则完全不影响现有行为。
+  if (
+    process.env.ADMIN_PASSWORD &&
+    pathname.startsWith('/api/admin/') &&
+    !pathname.startsWith('/api/admin/gate') &&
+    request.cookies.get(ADMIN_GATE_COOKIE)?.value !==
+      (await adminGateHash(process.env.ADMIN_PASSWORD))
+  ) {
+    return NextResponse.json(
+      { error: '需要后台密码', code: 'ADMIN_GATE' },
+      { status: 403 }
+    );
+  }
 
   // 跳过不需要认证的路径
   if (shouldSkipAuth(pathname)) {
@@ -124,6 +142,7 @@ function shouldSkipAuth(pathname: string): boolean {
     '/api/register',
     '/api/logout',
     '/api/server-config',
+    '/api/admin/gate', // 后台门禁：输密码换 Cookie 的入口，必须在登录之前可用
     '/_next',
     '/favicon.ico',
     '/robots.txt',

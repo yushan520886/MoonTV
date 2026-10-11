@@ -1543,6 +1543,11 @@ function AdminPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<'owner' | 'admin' | null>(null);
+  // 后台门禁（环境变量 ADMIN_PASSWORD 启用）：需要先输入独立密码
+  const [gateRequired, setGateRequired] = useState(false);
+  const [gatePassword, setGatePassword] = useState('');
+  const [gateError, setGateError] = useState('');
+  const [gateSubmitting, setGateSubmitting] = useState(false);
   const [expandedTabs, setExpandedTabs] = useState<{ [key: string]: boolean }>({
     userConfig: false,
     videoSource: false,
@@ -1562,6 +1567,11 @@ function AdminPageClient() {
 
       if (!response.ok) {
         const data = (await response.json()) as any;
+        // 后台门禁：需要先输入独立密码（环境变量 ADMIN_PASSWORD 启用）
+        if (response.status === 403 && data?.code === 'ADMIN_GATE') {
+          setGateRequired(true);
+          return;
+        }
         throw new Error(`获取配置失败: ${data.error}`);
       }
 
@@ -1583,6 +1593,31 @@ function AdminPageClient() {
     // 首次加载时显示骨架
     fetchConfig(true);
   }, [fetchConfig]);
+
+  // 提交后台门禁密码
+  const submitGate = useCallback(async () => {
+    if (!gatePassword) return;
+    setGateSubmitting(true);
+    setGateError('');
+    try {
+      const res = await fetch('/api/admin/gate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: gatePassword }),
+      });
+      const d = (await res.json().catch(() => ({}))) as any;
+      if (!res.ok) {
+        throw new Error(d.error || `验证失败: ${res.status}`);
+      }
+      setGateRequired(false);
+      setGatePassword('');
+      await fetchConfig(true);
+    } catch (err) {
+      setGateError(err instanceof Error ? err.message : '验证失败');
+    } finally {
+      setGateSubmitting(false);
+    }
+  }, [gatePassword, fetchConfig]);
 
   // 切换标签展开状态
   const toggleTab = (tabKey: string) => {
@@ -1631,6 +1666,52 @@ function AdminPageClient() {
                 />
               ))}
             </div>
+          </div>
+        </div>
+      </PageLayout>
+    );
+  }
+
+  // 后台门禁：需要先输入独立密码（整页只显示这个表单，不露出任何后台内容）
+  if (gateRequired) {
+    return (
+      <PageLayout activePath='/admin'>
+        <div className='px-2 sm:px-10 py-4 sm:py-8'>
+          <div className='max-w-[95%] mx-auto'>
+            <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2'>
+              后台验证
+            </h1>
+            <p className='mb-6 text-sm text-gray-500 dark:text-gray-400'>
+              此页面受独立密码保护，请输入后台密码继续。
+            </p>
+            <form
+              className='max-w-sm space-y-3'
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitGate();
+              }}
+            >
+              <input
+                type='password'
+                value={gatePassword}
+                onChange={(e) => setGatePassword(e.target.value)}
+                placeholder='后台密码'
+                autoFocus
+                className='w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-green-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100'
+              />
+              {gateError && (
+                <div className='text-xs text-red-600 dark:text-red-400'>
+                  {gateError}
+                </div>
+              )}
+              <button
+                type='submit'
+                disabled={gateSubmitting || !gatePassword}
+                className='w-full rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50'
+              >
+                {gateSubmitting ? '验证中…' : '进入后台'}
+              </button>
+            </form>
           </div>
         </div>
       </PageLayout>
