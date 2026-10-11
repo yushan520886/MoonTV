@@ -89,6 +89,15 @@ const INIT_SQL = `
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
   );
 
+  -- 用户在线状态（心跳）：供后台「谁在线」使用。每个用户只保留一行。
+  CREATE TABLE IF NOT EXISTS user_activity (
+    username TEXT PRIMARY KEY,
+    last_seen INTEGER NOT NULL,
+    ua TEXT,
+    ip TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_activity_last_seen ON user_activity(last_seen DESC);
+
   -- 基本索引
   CREATE INDEX IF NOT EXISTS idx_play_records_username ON play_records(username);
   CREATE INDEX IF NOT EXISTS idx_favorites_username ON favorites(username);
@@ -196,6 +205,55 @@ export class D1Storage implements IStorage {
       } catch (err) {
         console.error(`D1 建表语句执行失败: ${statement}`, err);
       }
+    }
+  }
+
+  // ===== 用户在线状态（心跳）=====
+
+  /**
+   * 记录一次用户活动（心跳）。
+   * 同一用户反复调用只更新同一行；`last_seen` 为毫秒时间戳。
+   */
+  async touchUserActivity(
+    userName: string,
+    ua?: string,
+    ip?: string
+  ): Promise<void> {
+    try {
+      const db = await this.getDatabase();
+      await db
+        .prepare(
+          `INSERT INTO user_activity (username, last_seen, ua, ip)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(username) DO UPDATE SET
+             last_seen = excluded.last_seen,
+             ua = excluded.ua,
+             ip = excluded.ip`
+        )
+        .bind(userName, Date.now(), ua || null, ip || null)
+        .run();
+    } catch (err) {
+      // 心跳失败不应影响任何主流程
+      console.error('Failed to touch user activity:', err);
+    }
+  }
+
+  /** 读取所有用户的最后活动时间（username -> 毫秒时间戳）。 */
+  async getAllUserActivity(): Promise<Record<string, number>> {
+    try {
+      const db = await this.getDatabase();
+      const result = await db
+        .prepare('SELECT username, last_seen FROM user_activity')
+        .all<any>();
+
+      const map: Record<string, number> = {};
+      (result.results || []).forEach((row: any) => {
+        map[row.username] = row.last_seen;
+      });
+      return map;
+    } catch (err) {
+      console.error('Failed to get user activity:', err);
+      return {};
     }
   }
 

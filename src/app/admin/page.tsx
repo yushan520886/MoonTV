@@ -21,9 +21,22 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ChevronDown, ChevronUp, Settings, Users, Video } from 'lucide-react';
+import {
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  Settings,
+  Users,
+  Video,
+} from 'lucide-react';
 import { GripVertical } from 'lucide-react';
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import {
+  Fragment,
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react';
 import Swal from 'sweetalert2';
 
 import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
@@ -1091,6 +1104,330 @@ const SiteConfigComponent = ({ config }: { config: AdminConfig | null }) => {
   );
 };
 
+/* ============ 用户活动（观看记录 / 在线状态 / 管控） ============ */
+
+const fmtAgo = (ms?: number) => {
+  if (!ms) return '—';
+  const diff = Date.now() - ms;
+  if (diff < 0) return '刚刚';
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  return `${Math.floor(diff / 86_400_000)} 天前`;
+};
+
+const fmtClock = (ms?: number) => {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const UserActivityConfig = () => {
+  // 当前登录用户名（用于在列表里标记「我」）
+  const selfName =
+    (typeof window !== 'undefined'
+      ? getAuthInfoFromBrowserCookie()?.username
+      : '') || '';
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [openUser, setOpenUser] = useState<string | null>(null);
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/records?type=overview', {
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as any;
+        throw new Error(d.error || `加载失败: ${res.status}`);
+      }
+      const d = await res.json();
+      setStats(d.stats);
+      setUsers(d.users || []);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : '加载用户活动失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const toggleDetail = async (username: string) => {
+    if (openUser === username) {
+      setOpenUser(null);
+      setDetail(null);
+      return;
+    }
+    setOpenUser(username);
+    setDetail(null);
+    setDetailLoading(true);
+    try {
+      const res = await fetch(
+        `/api/admin/records?type=detail&username=${encodeURIComponent(username)}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as any;
+        throw new Error(d.error || `加载失败: ${res.status}`);
+      }
+      setDetail(await res.json());
+    } catch (err) {
+      showError(err instanceof Error ? err.message : '加载详情失败');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  return (
+    <div className='space-y-4'>
+      {/* 顶部统计 */}
+      <div className='flex items-center justify-between'>
+        <div className='text-sm text-gray-500 dark:text-gray-400'>
+          每 2 分钟内有心跳即视为「在线」；数据来自播放记录 / 收藏 / 搜索历史。
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className='px-3 py-1 text-xs rounded-md border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50'
+        >
+          {loading ? '刷新中…' : '刷新'}
+        </button>
+      </div>
+
+      <div className='grid grid-cols-2 sm:grid-cols-5 gap-3'>
+        {[
+          {
+            k: '当前在线',
+            v: stats?.onlineUsers ?? '—',
+            hl: true,
+          },
+          { k: '总用户数', v: stats?.totalUsers ?? '—' },
+          { k: '近 7 天活跃', v: stats?.activeLast7Days ?? '—' },
+          { k: '观看记录', v: stats?.totalRecords ?? '—' },
+          { k: '收藏总数', v: stats?.totalFavorites ?? '—' },
+        ].map((it) => (
+          <div
+            key={it.k}
+            className={`rounded-lg border p-3 ${
+              it.hl
+                ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/20'
+                : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40'
+            }`}
+          >
+            <div className='text-xs text-gray-500 dark:text-gray-400'>{it.k}</div>
+            <div
+              className={`mt-1 text-xl font-bold ${
+                it.hl
+                  ? 'text-green-700 dark:text-green-400'
+                  : 'text-gray-900 dark:text-gray-100'
+              }`}
+            >
+              {it.v}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 用户明细 */}
+      <div className='overflow-x-auto'>
+        <table className='min-w-full divide-y divide-gray-200 dark:divide-gray-700'>
+          <thead className='bg-gray-50 dark:bg-gray-800'>
+            <tr>
+              {['用户', '角色', '状态', '观看', '收藏', '搜索', '最后活跃', '操作'].map(
+                (h) => (
+                  <th
+                    key={h}
+                    className='px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap'
+                  >
+                    {h}
+                  </th>
+                )
+              )}
+            </tr>
+          </thead>
+          <tbody className='divide-y divide-gray-200 dark:divide-gray-700'>
+            {users.length === 0 && (
+              <tr>
+                <td
+                  colSpan={8}
+                  className='px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400'
+                >
+                  {loading ? '加载中…' : '暂无数据'}
+                </td>
+              </tr>
+            )}
+            {users.map((u) => (
+              <Fragment key={u.username}>
+                <tr className='hover:bg-gray-50 dark:hover:bg-gray-800/60'>
+                  <td className='px-3 py-2 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap'>
+                    {u.username}
+                    {u.username === selfName && (
+                      <span className='ml-1 text-xs text-blue-500'>(我)</span>
+                    )}
+                  </td>
+                  <td className='px-3 py-2 text-xs text-gray-600 dark:text-gray-300 whitespace-nowrap'>
+                    {u.role === 'owner'
+                      ? '站长'
+                      : u.role === 'admin'
+                        ? '管理员'
+                        : '普通'}
+                  </td>
+                  <td className='px-3 py-2 text-xs whitespace-nowrap'>
+                    {u.banned ? (
+                      <span className='text-red-600 dark:text-red-400'>已封禁</span>
+                    ) : u.online ? (
+                      <span className='text-green-600 dark:text-green-400'>
+                        ● 在线
+                      </span>
+                    ) : (
+                      <span className='text-gray-400'>○ 离线</span>
+                    )}
+                  </td>
+                  <td className='px-3 py-2 text-sm text-gray-700 dark:text-gray-300'>
+                    {u.records}
+                  </td>
+                  <td className='px-3 py-2 text-sm text-gray-700 dark:text-gray-300'>
+                    {u.favorites}
+                  </td>
+                  <td className='px-3 py-2 text-sm text-gray-700 dark:text-gray-300'>
+                    {u.searches}
+                  </td>
+                  <td className='px-3 py-2 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap'>
+                    {fmtAgo(Math.max(u.lastSeen || 0, u.lastPlay || 0))}
+                  </td>
+                  <td className='px-3 py-2 whitespace-nowrap'>
+                    <button
+                      onClick={() => toggleDetail(u.username)}
+                      className='text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors'
+                    >
+                      {openUser === u.username ? '收起' : '查看'}
+                    </button>
+                  </td>
+                </tr>
+
+                {openUser === u.username && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className='px-3 py-3 bg-gray-50 dark:bg-gray-800/40'
+                    >
+                      {detailLoading ? (
+                        <div className='text-sm text-gray-500'>加载中…</div>
+                      ) : (
+                        <div className='space-y-3'>
+                          {/* 观看记录 */}
+                          <div>
+                            <div className='text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1'>
+                              观看记录（{detail?.records?.length ?? 0}）
+                            </div>
+                            <div className='max-h-56 overflow-y-auto text-xs space-y-1'>
+                              {(detail?.records || []).map((r: any) => {
+                                const pct =
+                                  r.total_time > 0
+                                    ? Math.round(
+                                        (r.play_time / r.total_time) * 100
+                                      )
+                                    : 0;
+                                return (
+                                  <div
+                                    key={r.key}
+                                    className='flex flex-wrap items-center gap-2 text-gray-700 dark:text-gray-300'
+                                  >
+                                    <span className='font-medium'>
+                                      {r.title || '(无标题)'}
+                                    </span>
+                                    <span className='text-gray-500'>
+                                      第 {r.index} 集
+                                    </span>
+                                    <span className='text-gray-500'>
+                                      {pct}%
+                                    </span>
+                                    <span className='text-gray-400'>
+                                      {r.source_name}
+                                    </span>
+                                    <span className='text-gray-400 ml-auto'>
+                                      {fmtClock(r.save_time)} ·{' '}
+                                      {fmtAgo(r.save_time)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {!detail?.records?.length && (
+                                <div className='text-gray-400'>无记录</div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 收藏 */}
+                          <div>
+                            <div className='text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1'>
+                              收藏（{detail?.favorites?.length ?? 0}）
+                            </div>
+                            <div className='max-h-32 overflow-y-auto text-xs space-y-1'>
+                              {(detail?.favorites || []).map((f: any) => (
+                                <div
+                                  key={f.key}
+                                  className='flex items-center gap-2 text-gray-700 dark:text-gray-300'
+                                >
+                                  <span className='font-medium'>
+                                    {f.title || '(无标题)'}
+                                  </span>
+                                  <span className='text-gray-400 ml-auto'>
+                                    {fmtAgo(f.save_time)}
+                                  </span>
+                                </div>
+                              ))}
+                              {!detail?.favorites?.length && (
+                                <div className='text-gray-400'>无收藏</div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 搜索历史 */}
+                          <div>
+                            <div className='text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1'>
+                              搜索历史（{detail?.searchHistory?.length ?? 0}）
+                            </div>
+                            <div className='flex flex-wrap gap-1'>
+                              {(detail?.searchHistory || []).map(
+                                (kw: string, i: number) => (
+                                  <span
+                                    key={`${kw}-${i}`}
+                                    className='text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                  >
+                                    {kw}
+                                  </span>
+                                )
+                              )}
+                              {!detail?.searchHistory?.length && (
+                                <span className='text-xs text-gray-400'>
+                                  无记录
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 function AdminPageClient() {
   const [config, setConfig] = useState<AdminConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1100,6 +1437,7 @@ function AdminPageClient() {
     userConfig: false,
     videoSource: false,
     siteConfig: false,
+    userActivity: false,
   });
 
   // 获取管理员配置
@@ -1243,6 +1581,21 @@ function AdminPageClient() {
                 role={role}
                 refreshConfig={fetchConfig}
               />
+            </CollapsibleTab>
+
+            {/* 用户活动标签 */}
+            <CollapsibleTab
+              title='用户活动'
+              icon={
+                <Activity
+                  size={20}
+                  className='text-gray-600 dark:text-gray-400'
+                />
+              }
+              isExpanded={expandedTabs.userActivity}
+              onToggle={() => toggleTab('userActivity')}
+            >
+              <UserActivityConfig />
             </CollapsibleTab>
 
             {/* 视频源配置标签 */}
