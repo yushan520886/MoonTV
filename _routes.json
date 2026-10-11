@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "include": ["/*"],
+  "exclude": [
+    "/_next/static/*",
+    "/favicon.ico",
+    "/robots.txt",
+    "/manifest.json",
+    "/logo.png",
+    "/screenshot.png",
+    "/icons/*",
+    "/sw.js",
+    "/workbox-*.js"
+  ]
+}

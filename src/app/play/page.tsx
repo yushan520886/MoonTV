@@ -16,12 +16,12 @@ import {
   savePlayRecord,
   toggleFavorite,
 } from '@/lib/db.client';
-import { proxyImageIfNeeded } from '@/lib/imageProxy';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8 } from '@/lib/utils';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
+import PosterImage from '@/components/PosterImage';
 
 // 扩展 HTMLVideoElement 类型以支持 hls 属性
 declare global {
@@ -1589,13 +1589,9 @@ function PlayPageClient() {
           {/* 封面展示 */}
           <div className='hidden md:block md:col-span-1 md:order-first'>
             <div className='pl-0 py-4 pr-6'>
-              <div className='bg-gray-300 dark:bg-gray-700 aspect-[2/3] flex items-center justify-center rounded-xl overflow-hidden'>
+              <div className='relative bg-gray-300 dark:bg-gray-700 aspect-[2/3] flex items-center justify-center rounded-xl overflow-hidden'>
                 {videoCover ? (
-                  <img
-                    src={proxyImageIfNeeded(videoCover)}
-                    alt={videoTitle}
-                    className='w-full h-full object-cover'
-                  />
+                  <PosterImage src={videoCover} alt={videoTitle} />
                 ) : (
                   <span className='text-gray-600 dark:text-gray-400'>
                     封面图片

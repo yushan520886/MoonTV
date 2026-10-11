@@ -9,9 +9,10 @@ import React, {
   useState,
 } from 'react';
 
-import { proxyImageIfNeeded } from '@/lib/imageProxy';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8 } from '@/lib/utils';
+
+import PosterImage from '@/components/PosterImage';
 
 // 定义视频信息类型
 interface VideoInfo {
@@ -445,17 +446,12 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                           : 'hover:bg-gray-200/50 dark:hover:bg-white/10 hover:scale-[1.02]'
                       }`.trim()}
                       >
-                        {/* 封面 */}
-                        <div className='flex-shrink-0 w-12 h-20 bg-gray-300 dark:bg-gray-600 rounded overflow-hidden'>
+                        {/* 封面（PosterImage：镜像直连 → 代理 → 原图，逐级降级） */}
+                        <div className='relative flex-shrink-0 w-12 h-20 bg-gray-300 dark:bg-gray-600 rounded overflow-hidden'>
                           {source.episodes && source.episodes.length > 0 && (
-                            <img
-                              src={proxyImageIfNeeded(source.poster)}
+                            <PosterImage
+                              src={source.poster}
                               alt={source.title}
-                              className='w-full h-full object-cover'
-                              onError={(e) => {
-                                const target = e.target as HTMLImageElement;
-                                target.style.display = 'none';
-                              }}
                             />
                           )}
                         </div>
