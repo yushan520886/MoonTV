@@ -1123,8 +1123,13 @@ const fmtClock = (ms?: number) => {
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-const UserActivityConfig = () => {
-  // 当前登录用户名（用于在列表里标记「我」）
+interface UserActivityConfigProps {
+  /** 当前登录者角色，用于决定能否在列表里直接封禁/删除（与「用户配置」页同一套规则） */
+  role: 'owner' | 'admin' | null;
+}
+
+const UserActivityConfig = ({ role }: UserActivityConfigProps) => {
+  // 当前登录用户名（用于在列表里标记「我」，以及「不能操作自己」的判断）
   const selfName =
     (typeof window !== 'undefined'
       ? getAuthInfoFromBrowserCookie()?.username
@@ -1135,6 +1140,8 @@ const UserActivityConfig = () => {
   const [openUser, setOpenUser] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  /** 正在执行管控操作的用户名，用于禁用按钮防重复点击 */
+  const [acting, setActing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1159,6 +1166,60 @@ const UserActivityConfig = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * 在活动页直接执行管控操作（封禁 / 解封 / 清空数据 / 删除用户）。
+   * 复用后台已有的 /api/admin/user 接口，权限判定在服务端再做一次。
+   */
+  const doAction = useCallback(
+    async (
+      action: 'ban' | 'unban' | 'clearUserData' | 'deleteUser',
+      username: string
+    ) => {
+      const confirmText: Partial<Record<typeof action, string>> = {
+        clearUserData: `将清空 ${username} 的播放记录、收藏、搜索历史和在线状态（账号保留，仍可登录）。此操作不可恢复！`,
+        deleteUser: `删除用户 ${username} 将同时删除其搜索历史、播放记录和收藏夹，此操作不可恢复！`,
+      };
+      const text = confirmText[action];
+      if (text) {
+        const { isConfirmed } = await Swal.fire({
+          title: action === 'deleteUser' ? '确认删除用户' : '确认清空数据',
+          text,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: action === 'deleteUser' ? '确认删除' : '确认清空',
+          cancelButtonText: '取消',
+          confirmButtonColor: '#dc2626',
+        });
+        if (!isConfirmed) return;
+      }
+
+      setActing(username);
+      try {
+        const res = await fetch('/api/admin/user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, targetUsername: username }),
+        });
+        if (!res.ok) {
+          const d = (await res.json().catch(() => ({}))) as any;
+          throw new Error(d.error || `操作失败: ${res.status}`);
+        }
+
+        // 该用户已被删除 / 数据已清空时，收起他展开着的详情
+        if (openUser === username && action !== 'ban' && action !== 'unban') {
+          setOpenUser(null);
+          setDetail(null);
+        }
+        await load();
+      } catch (err) {
+        showError(err instanceof Error ? err.message : '操作失败');
+      } finally {
+        setActing(null);
+      }
+    },
+    [load, openUser]
+  );
 
   const toggleDetail = async (username: string) => {
     if (openUser === username) {
@@ -1264,7 +1325,14 @@ const UserActivityConfig = () => {
                 </td>
               </tr>
             )}
-            {users.map((u) => (
+            {users.map((u) => {
+              const isSelf = u.username === selfName;
+              // 与「用户配置」页同一套规则：不能操作自己；
+              // 站长可操作除自己外的所有人，管理员只能操作普通用户
+              const canManage =
+                !isSelf &&
+                (role === 'owner' || (role === 'admin' && u.role === 'user'));
+              return (
               <Fragment key={u.username}>
                 <tr className='hover:bg-gray-50 dark:hover:bg-gray-800/60'>
                   <td className='px-3 py-2 text-sm text-gray-900 dark:text-gray-100 whitespace-nowrap'>
@@ -1304,12 +1372,53 @@ const UserActivityConfig = () => {
                     {fmtAgo(Math.max(u.lastSeen || 0, u.lastPlay || 0))}
                   </td>
                   <td className='px-3 py-2 whitespace-nowrap'>
-                    <button
-                      onClick={() => toggleDetail(u.username)}
-                      className='text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors'
-                    >
-                      {openUser === u.username ? '收起' : '查看'}
-                    </button>
+                    <div className='flex items-center gap-1'>
+                      <button
+                        onClick={() => toggleDetail(u.username)}
+                        className='text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors'
+                      >
+                        {openUser === u.username ? '收起' : '查看'}
+                      </button>
+
+                      {canManage && u.role !== 'owner' && (
+                        <>
+                          {!u.banned ? (
+                            <button
+                              onClick={() => doAction('ban', u.username)}
+                              disabled={acting === u.username}
+                              className='text-xs px-2 py-1 rounded border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors disabled:opacity-50'
+                            >
+                              封禁
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => doAction('unban', u.username)}
+                              disabled={acting === u.username}
+                              className='text-xs px-2 py-1 rounded border border-green-300 dark:border-green-800 text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/30 transition-colors disabled:opacity-50'
+                            >
+                              解封
+                            </button>
+                          )}
+                          <button
+                            onClick={() => doAction('clearUserData', u.username)}
+                            disabled={acting === u.username}
+                            className='text-xs px-2 py-1 rounded border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors disabled:opacity-50'
+                          >
+                            清空数据
+                          </button>
+                        </>
+                      )}
+
+                      {canManage && (
+                        <button
+                          onClick={() => doAction('deleteUser', u.username)}
+                          disabled={acting === u.username}
+                          className='text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50'
+                        >
+                          删除
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
 
@@ -1420,7 +1529,8 @@ const UserActivityConfig = () => {
                   </tr>
                 )}
               </Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1595,7 +1705,7 @@ function AdminPageClient() {
               isExpanded={expandedTabs.userActivity}
               onToggle={() => toggleTab('userActivity')}
             >
-              <UserActivityConfig />
+              <UserActivityConfig role={role} />
             </CollapsibleTab>
 
             {/* 视频源配置标签 */}

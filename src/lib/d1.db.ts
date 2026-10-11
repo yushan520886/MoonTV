@@ -552,6 +552,36 @@ export class D1Storage implements IStorage {
     }
   }
 
+  /**
+   * 清空某个用户的「历史数据」，但**保留账号本身**。
+   *
+   * 与 deleteUser 的区别：deleteUser 连账号（users 表那一行）一起删，
+   * 这里只清播放记录 / 收藏 / 搜索历史 / 在线状态，用户还能照常登录。
+   * 用途：人还留着，但想把他看过的痕迹抹掉。
+   */
+  async clearUserData(userName: string): Promise<void> {
+    try {
+      const db = await this.getDatabase();
+      const statements = [
+        db
+          .prepare('DELETE FROM play_records WHERE username = ?')
+          .bind(userName),
+        db.prepare('DELETE FROM favorites WHERE username = ?').bind(userName),
+        db
+          .prepare('DELETE FROM search_history WHERE username = ?')
+          .bind(userName),
+        db
+          .prepare('DELETE FROM user_activity WHERE username = ?')
+          .bind(userName),
+      ];
+
+      await db.batch(statements);
+    } catch (err) {
+      console.error('Failed to clear user data:', err);
+      throw err;
+    }
+  }
+
   // 搜索历史相关
   async getSearchHistory(userName: string): Promise<string[]> {
     try {

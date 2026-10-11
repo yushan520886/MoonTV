@@ -94,9 +94,17 @@ export async function GET(request: NextRequest) {
         console.error('getAllUsers 失败:', e);
       }
 
-      // 站长可能不在用户表里，补齐
+      // 站长可能不在用户表里，需要补齐；但只给站长自己看。
+      // 管理员按规则「不能查看站长」，这里连总览里的那一行也一并隐藏
+      // （否则虽然点详情会被 401 挡住，统计数字仍然泄露出去了）。
       const ownerName = process.env.USERNAME;
-      if (ownerName && !usernames.includes(ownerName)) usernames.unshift(ownerName);
+      if (operatorRole === 'owner') {
+        if (ownerName && !usernames.includes(ownerName)) {
+          usernames.unshift(ownerName);
+        }
+      } else if (ownerName) {
+        usernames = usernames.filter((u) => u !== ownerName);
+      }
 
       const activityMap = await readActivity();
       const now = Date.now();

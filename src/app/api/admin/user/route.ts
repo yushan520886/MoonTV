@@ -19,6 +19,7 @@ const ACTIONS = [
   'setAllowRegister',
   'changePassword',
   'deleteUser',
+  'clearUserData',
 ] as const;
 
 export async function POST(request: NextRequest) {
@@ -303,6 +304,27 @@ export async function POST(request: NextRequest) {
           if (userIndex > -1) {
             adminConfig.UserConfig.Users.splice(userIndex, 1);
           }
+
+          break;
+        }
+        case 'clearUserData': {
+          // 清空该用户的历史数据，但保留账号。
+          // 「不能操作自己」已由上面的通用校验挡住；「不能操作站长」也已由前面拦下。
+          if (isTargetAdmin && operatorRole !== 'owner') {
+            return NextResponse.json(
+              { error: '仅站长可清理管理员的记录' },
+              { status: 401 }
+            );
+          }
+
+          if (!storage || typeof (storage as any).clearUserData !== 'function') {
+            return NextResponse.json(
+              { error: '存储未配置用户数据清理功能' },
+              { status: 500 }
+            );
+          }
+
+          await (storage as any).clearUserData(targetUsername!);
 
           break;
         }
