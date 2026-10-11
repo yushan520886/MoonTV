@@ -115,8 +115,29 @@ const INIT_SQL = `
 `;
 
 // 获取全局D1数据库实例
+//
+// 说明：Cloudflare Pages 运行时，process.env 是由本次请求 env 支撑的 Proxy，
+// 所以 process.env.DB 拿到的就是绑定的 D1 实例。
+// 绑定缺失时**必须显式报错**，否则会退化成
+// 「Cannot read properties of undefined (reading 'prepare')」这种看不出原因的 500。
 function getD1Database(): D1Database {
-  return (process.env as any).DB as D1Database;
+  let binding: unknown;
+  try {
+    binding = (process.env as any).DB;
+  } catch (err) {
+    throw new Error(
+      `读取 D1 绑定失败（可能不在请求上下文中）: ${(err as Error).message}`
+    );
+  }
+
+  if (!binding) {
+    throw new Error(
+      'D1 绑定 "DB" 不可用：请在 Cloudflare 项目 → 设置 → 绑定（生产环境）' +
+        '确认已添加 D1 数据库且变量名正好是 DB，然后重新部署一次。'
+    );
+  }
+
+  return binding as D1Database;
 }
 
 export class D1Storage implements IStorage {
@@ -126,11 +147,22 @@ export class D1Storage implements IStorage {
   private async getDatabase(): Promise<D1Database> {
     if (!this.db) {
       this.db = getD1Database();
-      if (!this.initialized) {
+    }
+
+    // ⚠️ 原实现把 initDatabase() 放在 `if (!this.db)` 里面：
+    // 一旦建表失败，this.db 依然是真值（对象已存在），**后续请求永远不会再尝试建表**，
+    // 于是这个 isolate 会一直报 "no such table"，而全新的 isolate 又能正常建表 ——
+    // 外在表现正是「大部分时候打不开、偶尔才能打开」。这里把初始化独立出来并允许重试。
+    if (!this.initialized) {
+      try {
         await this.initDatabase();
         this.initialized = true;
+      } catch (err) {
+        this.initialized = false;
+        throw err;
       }
     }
+
     return this.db;
   }
 

@@ -3,11 +3,14 @@
 import {
   Clover,
   Film,
+  Filter,
+  Globe,
   Home,
   Menu,
   MessageCircleHeart,
   MountainSnow,
   Search,
+  SlidersHorizontal,
   Star,
   Swords,
   Tv,
@@ -163,6 +166,18 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
     },
     { icon: MountainSnow, label: '日剧', href: '/douban?type=tv&tag=日剧' },
     { icon: VenetianMask, label: '日漫', href: '/douban?type=tv&tag=日本动画' },
+    // —— 分类筛选入口：地区 / 类型 / 年代在页面内自由组合 ——
+    { icon: Filter, label: '电影筛选', href: '/douban?type=movie&title=电影筛选' },
+    {
+      icon: SlidersHorizontal,
+      label: '剧集筛选',
+      href: '/douban?type=tv&title=剧集筛选',
+    },
+    {
+      icon: Globe,
+      label: '泰剧',
+      href: '/douban?type=tv&region=泰国&title=泰剧',
+    },
   ];
 
   return (
@@ -250,6 +265,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                   // 检查当前路径是否匹配这个菜单项
                   const typeMatch = item.href.match(/type=([^&]+)/)?.[1];
                   const tagMatch = item.href.match(/tag=([^&]+)/)?.[1];
+                  const regionMatch = item.href.match(/region=([^&]+)/)?.[1];
 
                   // 解码URL以进行正确的比较
                   const decodedActive = decodeURIComponent(active);
@@ -258,9 +274,16 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                   const isActive =
                     decodedActive === decodedItemHref ||
                     (decodedActive.startsWith('/douban') &&
+                      !!typeMatch &&
                       decodedActive.includes(`type=${typeMatch}`) &&
-                      tagMatch &&
-                      decodedActive.includes(`tag=${tagMatch}`));
+                      (tagMatch
+                        ? decodedActive.includes(`tag=${tagMatch}`)
+                        : regionMatch
+                          ? decodedActive.includes(`region=${regionMatch}`)
+                          : // 「电影筛选 / 剧集筛选」这类通用入口：
+                            // 只有当前没有任何附加条件时才高亮
+                            !decodedActive.includes('tag=') &&
+                            !decodedActive.includes('region=')));
                   const Icon = item.icon;
                   return (
                     <Link

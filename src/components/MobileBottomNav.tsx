@@ -3,10 +3,13 @@
 import {
   Clover,
   Film,
+  Filter,
+  Globe,
   Home,
   MessageCircleHeart,
   MountainSnow,
   Search,
+  SlidersHorizontal,
   Star,
   Swords,
   Tv,
@@ -59,11 +62,24 @@ const MobileBottomNav = ({ activePath }: MobileBottomNavProps) => {
     },
     { icon: MountainSnow, label: '日剧', href: '/douban?type=tv&tag=日剧' },
     { icon: VenetianMask, label: '日漫', href: '/douban?type=tv&tag=日本动画' },
+    // —— 分类筛选入口：地区 / 类型 / 年代在页面内自由组合 ——
+    { icon: Filter, label: '电影筛选', href: '/douban?type=movie&title=电影筛选' },
+    {
+      icon: SlidersHorizontal,
+      label: '剧集筛选',
+      href: '/douban?type=tv&title=剧集筛选',
+    },
+    {
+      icon: Globe,
+      label: '泰剧',
+      href: '/douban?type=tv&region=泰国&title=泰剧',
+    },
   ];
 
   const isActive = (href: string) => {
     const typeMatch = href.match(/type=([^&]+)/)?.[1];
     const tagMatch = href.match(/tag=([^&]+)/)?.[1];
+    const regionMatch = href.match(/region=([^&]+)/)?.[1];
 
     // 解码URL以进行正确的比较
     const decodedActive = decodeURIComponent(currentActive);
@@ -72,8 +88,16 @@ const MobileBottomNav = ({ activePath }: MobileBottomNavProps) => {
     return (
       decodedActive === decodedItemHref ||
       (decodedActive.startsWith('/douban') &&
+        !!typeMatch &&
         decodedActive.includes(`type=${typeMatch}`) &&
-        decodedActive.includes(`tag=${tagMatch}`))
+        (tagMatch
+          ? decodedActive.includes(`tag=${tagMatch}`)
+          : regionMatch
+            ? decodedActive.includes(`region=${regionMatch}`)
+            : // 「电影筛选 / 剧集筛选」这类通用入口：
+              // 只有当前没有任何附加条件时才高亮
+              !decodedActive.includes('tag=') &&
+              !decodedActive.includes('region=')))
     );
   };
 

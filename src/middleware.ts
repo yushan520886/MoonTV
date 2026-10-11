@@ -98,6 +98,17 @@ async function verifySignature(
 
 // 重定向到登录页面
 function redirectToLogin(request: NextRequest, pathname: string): NextResponse {
+  // ⚠️ API 请求绝不能重定向到登录页：
+  // 客户端（手机 App / 前端）拿到的是 HTML，JSON 解析失败后会报出
+  // 「获取收藏夹失败」这类完全误导性的错误，极难排查。
+  // API 一律返回 401 JSON，让调用方能识别出「登录态失效」。
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json(
+      { error: 'Unauthorized', message: '登录状态已失效，请重新登录' },
+      { status: 401 }
+    );
+  }
+
   const loginUrl = new URL('/login', request.url);
   // 保留完整的URL，包括查询参数
   const fullUrl = `${pathname}${request.nextUrl.search}`;
