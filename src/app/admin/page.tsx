@@ -25,7 +25,9 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  LogOut,
   Settings,
+  ShieldCheck,
   Users,
   Video,
 } from 'lucide-react';
@@ -43,6 +45,7 @@ import { AdminConfig, AdminConfigResult } from '@/lib/admin.types';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 
 import PageLayout from '@/components/PageLayout';
+import { useSite } from '@/components/SiteProvider';
 
 // 统一弹窗方法（必须在首次使用前定义）
 const showError = (message: string) =>
@@ -1543,6 +1546,8 @@ function AdminPageClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<'owner' | 'admin' | null>(null);
+  // 站点名称：门禁页与前台登录页保持同一视觉（都显示站名）
+  const { siteName } = useSite();
   // 后台门禁（环境变量 ADMIN_PASSWORD 启用）：需要先输入独立密码
   const [gateRequired, setGateRequired] = useState(false);
   const [gatePassword, setGatePassword] = useState('');
@@ -1563,9 +1568,19 @@ function AdminPageClient() {
         setLoading(true);
       }
 
-      const response = await fetch(`/api/admin/config`);
+      const response = await fetch(`/api/admin/config`, {
+        cache: 'no-store',
+      });
 
       if (!response.ok) {
+        // 登录态失效（会话过期 / 已退出登录）：直接回登录页，
+        // 而不是留在此处报一个看不懂的错误。带上回跳地址，登录后自动回到后台。
+        if (response.status === 401) {
+          if (typeof window !== 'undefined') {
+            window.location.replace('/login?redirect=%2Fadmin');
+          }
+          return;
+        }
         const data = (await response.json()) as any;
         // 后台门禁：需要先输入独立密码（环境变量 ADMIN_PASSWORD 启用）
         if (response.status === 403 && data?.code === 'ADMIN_GATE') {
@@ -1650,6 +1665,26 @@ function AdminPageClient() {
     }
   };
 
+  /**
+   * 退出登录（后台）
+   *
+   * 1. 调用 /api/logout 清除**全部**凭证：站点会话 Cookie（auth）+ 后台门禁 Cookie（admin_gate）。
+   * 2. 无论请求成功与否都要离开当前页面 —— 否则用户会「点了退出还停在后台」。
+   * 3. 用 location.replace 而非 reload：不写历史记录，之后按「后退」也回不到后台。
+   */
+  const handleAdminLogout = useCallback(async () => {
+    try {
+      await fetch('/api/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+      });
+    } catch (err) {
+      console.error('退出登录请求失败:', err);
+    }
+    window.location.replace('/login');
+  }, []);
+
   if (loading) {
     return (
       <PageLayout activePath='/admin'>
@@ -1672,49 +1707,68 @@ function AdminPageClient() {
     );
   }
 
-  // 后台门禁：需要先输入独立密码（整页只显示这个表单，不露出任何后台内容）
+  // 后台门禁：需要先输入独立密码（整页只显示这个表单，不露出任何后台内容）。
+  // 视觉与结构对齐前台登录页（/login）：同一个渐变卡片、同一套输入框与按钮样式，
+  // 仅通过「后台管理 · 需要独立密码」标签明确区分场景 —— 不再有两个风格割裂的登录界面。
   if (gateRequired) {
     return (
-      <PageLayout activePath='/admin'>
-        <div className='px-2 sm:px-10 py-4 sm:py-8'>
-          <div className='max-w-[95%] mx-auto'>
-            <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2'>
-              后台验证
-            </h1>
-            <p className='mb-6 text-sm text-gray-500 dark:text-gray-400'>
-              此页面受独立密码保护，请输入后台密码继续。
-            </p>
-            <form
-              className='max-w-sm space-y-3'
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitGate();
-              }}
-            >
+      <div className='relative min-h-screen flex items-center justify-center px-4 overflow-hidden'>
+        <div className='relative z-10 w-full max-w-md rounded-3xl bg-gradient-to-b from-white/90 via-white/70 to-white/40 dark:from-zinc-900/90 dark:via-zinc-900/70 dark:to-zinc-900/40 backdrop-blur-xl shadow-2xl p-10 dark:border dark:border-zinc-800'>
+          <h1 className='text-green-600 tracking-tight text-center text-3xl font-extrabold mb-3 drop-shadow-sm'>
+            {siteName}
+          </h1>
+          <p className='mb-8 text-center'>
+            <span className='inline-flex items-center gap-1.5 rounded-full bg-green-600/10 px-3 py-1 text-sm font-medium text-green-700 dark:text-green-400'>
+              <ShieldCheck size={14} />
+              后台管理 · 需要独立密码
+            </span>
+          </p>
+          <form
+            className='space-y-8'
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitGate();
+            }}
+          >
+            <div>
+              <label htmlFor='gate-password' className='sr-only'>
+                后台密码
+              </label>
               <input
+                id='gate-password'
                 type='password'
+                autoComplete='current-password'
                 value={gatePassword}
                 onChange={(e) => setGatePassword(e.target.value)}
-                placeholder='后台密码'
+                placeholder='请输入后台密码'
                 autoFocus
-                className='w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-green-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100'
+                className='block w-full rounded-lg border-0 py-3 px-4 text-gray-900 dark:text-gray-100 shadow-sm ring-1 ring-white/60 dark:ring-white/20 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus:ring-2 focus:ring-green-500 focus:outline-none sm:text-base bg-white/60 dark:bg-zinc-800/60 backdrop-blur'
               />
-              {gateError && (
-                <div className='text-xs text-red-600 dark:text-red-400'>
-                  {gateError}
-                </div>
-              )}
-              <button
-                type='submit'
-                disabled={gateSubmitting || !gatePassword}
-                className='w-full rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-50'
-              >
-                {gateSubmitting ? '验证中…' : '进入后台'}
-              </button>
-            </form>
+            </div>
+            {gateError && (
+              <p className='text-sm text-red-600 dark:text-red-400'>
+                {gateError}
+              </p>
+            )}
+            <button
+              type='submit'
+              disabled={gateSubmitting || !gatePassword}
+              className='inline-flex w-full justify-center rounded-lg bg-green-600 py-3 text-base font-semibold text-white shadow-lg transition-all duration-200 hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50'
+            >
+              {gateSubmitting ? '验证中…' : '进入后台'}
+            </button>
+          </form>
+          <div className='mt-6 text-center'>
+            <button
+              type='button'
+              onClick={handleAdminLogout}
+              className='text-xs text-gray-500 underline transition-colors hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+            >
+              退出登录
+            </button>
           </div>
         </div>
-      </PageLayout>
+      </div>
     );
   }
 
@@ -1727,7 +1781,7 @@ function AdminPageClient() {
     <PageLayout activePath='/admin'>
       <div className='px-2 sm:px-10 py-4 sm:py-8'>
         <div className='max-w-[95%] mx-auto'>
-          {/* 标题 + 重置配置按钮 */}
+          {/* 标题 + 操作按钮（重置配置 / 退出登录） */}
           <div className='flex items-center gap-2 mb-8'>
             <h1 className='text-2xl font-bold text-gray-900 dark:text-gray-100'>
               管理员设置
@@ -1740,6 +1794,14 @@ function AdminPageClient() {
                 重置配置
               </button>
             )}
+            <button
+              onClick={handleAdminLogout}
+              className='ml-auto inline-flex items-center gap-1 px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors'
+              title='退出登录（清除登录状态并返回登录页）'
+            >
+              <LogOut size={14} />
+              退出登录
+            </button>
           </div>
 
           {/* 站点配置标签 */}

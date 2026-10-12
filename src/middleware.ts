@@ -5,11 +5,44 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ADMIN_GATE_COOKIE, adminGateHash } from '@/lib/adminGate';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 
+/**
+ * 后台登录/退出流程（本轮优化点）：
+ * 1. 所有 /admin 页面请求都经过这里做**服务端**登录态校验，未登录直接 307 到登录页
+ *    —— 仅靠前端显示密码框不算防护，直接输网址也必须被拦下。
+ * 2. /api/admin/* 未登录返回 401 JSON（不重定向，避免客户端拿到 HTML 解析失败）。
+ * 3. 后台相关响应一律 no-store：退出登录后按「后退 / 刷新」不会命中浏览器缓存的已登录页面。
+ */
+
+/** 是否后台相关路径（页面 + 接口） */
+function isAdminArea(pathname: string): boolean {
+  return (
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/') ||
+    pathname.startsWith('/api/admin/')
+  );
+}
+
+/** 禁止缓存（防「退出后按后退」看到缓存的已登录页面） */
+function noStore(res: NextResponse): NextResponse {
+  res.headers.set(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, max-age=0'
+  );
+  res.headers.set('Pragma', 'no-cache');
+  return res;
+}
+
+/** 放行；后台区域额外加 no-store */
+function pass(pathname: string): NextResponse {
+  const res = NextResponse.next();
+  return isAdminArea(pathname) ? noStore(res) : res;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ★ 后台门禁：设置了 ADMIN_PASSWORD 时，后台接口必须带门禁 Cookie。
-  //   /admin 页面本身放行 —— 它是客户端渲染，拿到 403 后会自己显示密码输入框。
+  //   /admin 页面本身放行 —— 它是客户端渲染，通过站点登录后拿到 403 会自己显示密码输入框。
   //   /api/admin/gate 是「输入密码换 Cookie」的入口，必须放行，否则鸡生蛋。
   //   不设置 ADMIN_PASSWORD 则完全不影响现有行为。
   if (
@@ -19,9 +52,11 @@ export async function middleware(request: NextRequest) {
     request.cookies.get(ADMIN_GATE_COOKIE)?.value !==
       (await adminGateHash(process.env.ADMIN_PASSWORD))
   ) {
-    return NextResponse.json(
-      { error: '需要后台密码', code: 'ADMIN_GATE' },
-      { status: 403 }
+    return noStore(
+      NextResponse.json(
+        { error: '需要后台密码', code: 'ADMIN_GATE' },
+        { status: 403 }
+      )
     );
   }
 
@@ -34,7 +69,7 @@ export async function middleware(request: NextRequest) {
 
   // 如果没有设置密码，直接放行
   if (storageType === 'localstorage' && !process.env.PASSWORD) {
-    return NextResponse.next();
+    return pass(pathname);
   }
 
   // 从cookie获取认证信息
@@ -49,7 +84,7 @@ export async function middleware(request: NextRequest) {
     if (!authInfo.password || authInfo.password !== process.env.PASSWORD) {
       return redirectToLogin(request, pathname);
     }
-    return NextResponse.next();
+    return pass(pathname);
   }
 
   // 其他模式：只验证签名
@@ -68,7 +103,7 @@ export async function middleware(request: NextRequest) {
 
     // 签名验证通过即可
     if (isValidSignature) {
-      return NextResponse.next();
+      return pass(pathname);
     }
   }
 
@@ -121,9 +156,11 @@ function redirectToLogin(request: NextRequest, pathname: string): NextResponse {
   // 「获取收藏夹失败」这类完全误导性的错误，极难排查。
   // API 一律返回 401 JSON，让调用方能识别出「登录态失效」。
   if (pathname.startsWith('/api/')) {
-    return NextResponse.json(
-      { error: 'Unauthorized', message: '登录状态已失效，请重新登录' },
-      { status: 401 }
+    return noStore(
+      NextResponse.json(
+        { error: 'Unauthorized', message: '登录状态已失效，请重新登录' },
+        { status: 401 }
+      )
     );
   }
 
@@ -131,7 +168,8 @@ function redirectToLogin(request: NextRequest, pathname: string): NextResponse {
   // 保留完整的URL，包括查询参数
   const fullUrl = `${pathname}${request.nextUrl.search}`;
   loginUrl.searchParams.set('redirect', fullUrl);
-  return NextResponse.redirect(loginUrl);
+  // 302（临时）而非 301：避免浏览器永久缓存「后台 → 登录页」的跳转
+  return noStore(NextResponse.redirect(loginUrl, 307));
 }
 
 // 判断是否需要跳过认证的路径

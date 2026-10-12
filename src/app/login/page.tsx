@@ -28,6 +28,10 @@ function LoginPageClient() {
     typeof window !== 'undefined' &&
     Boolean((window as any).RUNTIME_CONFIG?.ENABLE_REGISTER);
 
+  // 是否由后台（/admin）跳转而来：是的话在标题下加一个明确的场景标签。
+  // 页面本身与前台登录完全同一个（统一设计），只多这一行标识以示区分。
+  const isAdminLogin = (searchParams.get('redirect') || '').startsWith('/admin');
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
@@ -94,9 +98,21 @@ function LoginPageClient() {
         <ThemeToggle />
       </div>
       <div className='relative z-10 w-full max-w-md rounded-3xl bg-gradient-to-b from-white/90 via-white/70 to-white/40 dark:from-zinc-900/90 dark:via-zinc-900/70 dark:to-zinc-900/40 backdrop-blur-xl shadow-2xl p-10 dark:border dark:border-zinc-800'>
-        <h1 className='text-green-600 tracking-tight text-center text-3xl font-extrabold mb-8 bg-clip-text drop-shadow-sm'>
+        <h1 className='text-green-600 tracking-tight text-center text-3xl font-extrabold mb-3 bg-clip-text drop-shadow-sm'>
           {siteName}
         </h1>
+        {isAdminLogin ? (
+          <p className='mb-8 text-center'>
+            <span className='inline-flex items-center gap-1.5 rounded-full bg-green-600/10 px-3 py-1 text-sm font-medium text-green-700 dark:text-green-400'>
+              管理员登录
+            </span>
+            <span className='mt-2 block text-xs text-gray-500 dark:text-gray-400'>
+              登录后还需输入后台独立密码
+            </span>
+          </p>
+        ) : (
+          <div className='mb-5' />
+        )}
         <form onSubmit={handleSubmit} className='space-y-8'>
           {shouldAskUsername && (
             <div>
