@@ -257,25 +257,6 @@ export class D1Storage implements IStorage {
     }
   }
 
-  /**
-   * 标记用户离线（退出登录 / 关闭最后一个标签页时调用）。
-   *
-   * 删除该用户的活动行，而不是写一个"很久以前"的时间戳 —— 这样后台立刻显示离线，
-   * 也不用等 ONLINE_WINDOW_MS 兜底窗口。
-   */
-  async clearUserActivity(userName: string): Promise<void> {
-    try {
-      const db = await this.getDatabase();
-      await db
-        .prepare('DELETE FROM user_activity WHERE username = ?')
-        .bind(userName)
-        .run();
-    } catch (err) {
-      // 离线标记失败不影响任何主流程
-      console.error('Failed to clear user activity:', err);
-    }
-  }
-
   // 播放记录相关
   async getPlayRecord(
     userName: string,

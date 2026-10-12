@@ -1,47 +1,58 @@
-/* eslint-disable no-console */
+/* eslint-disable @typescript-eslint/no-explicit-any, no-console */
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { markUserActive, markUserOffline } from '@/lib/activity';
 import { getAuthInfoFromCookie } from '@/lib/auth';
+import { getStorage } from '@/lib/db';
 
 export const runtime = 'edge';
 
-const NO_STORE = { 'Cache-Control': 'no-store' } as const;
-
 /**
- * 在线状态接口（**一次性上报**，不是定时心跳）
+ * 心跳接口
  *
- * 2026-10-12 调整：前端不再每 60 秒轮询。现在只有两种调用时机：
- *  1. 打开站点/App 的页面时上报一次上线（POST /api/heartbeat）
- *  2. 关闭最后一个标签页时上报下线（POST /api/heartbeat?offline=1，走 sendBeacon）
+ * 前端每隔一段时间调用一次，用于后台统计「谁在线」。
+ * - 未登录 → 401（前端收到 401 会停止心跳）
+ * - 非 d1 存储（如 redis / localstorage）没有该方法 → 直接当作成功返回，不影响使用
  *
- * 其余"保持在线"由真实操作驱动（登录成功 / 播放进度 / 收藏 / 搜索），
- * 都在服务端对应接口里顺带刷新，见 src/lib/activity.ts。
- *
- * 旧的定时心跳客户端仍可正常调用（会退化为"一次上报"），保持向后兼容。
+ * 响应体极小，且必须 no-store（不要被缓存）。
  */
 export async function POST(request: NextRequest) {
   const authInfo = getAuthInfoFromCookie(request);
-
-  // 下线上报：即使 cookie 已被清（退出登录）也应放行，故放宽判断
-  const isOffline =
-    request.nextUrl.searchParams.get('offline') === '1' ||
-    request.nextUrl.searchParams.get('offline') === 'true';
-
-  if (isOffline) {
-    // 尽力而为：解析不出用户就当成功（sendBeacon 也无法处理错误）
-    await markUserOffline(authInfo?.username);
-    return NextResponse.json({ ok: true, offline: true }, { headers: NO_STORE });
-  }
-
   if (!authInfo || !authInfo.username) {
     return NextResponse.json(
       { error: 'Unauthorized' },
-      { status: 401, headers: NO_STORE }
+      { status: 401, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 
-  await markUserActive(authInfo.username, request);
-  return NextResponse.json({ ok: true }, { headers: NO_STORE });
+  const storage: any = getStorage();
+  const touch = storage?.touchUserActivity;
+
+  if (typeof touch !== 'function') {
+    // 存储实现不支持在线状态，静默成功
+    return NextResponse.json(
+      { ok: true, skipped: true },
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
+
+  try {
+    const ua = request.headers.get('user-agent') || '';
+    const ip =
+      request.headers.get('cf-connecting-ip') ||
+      request.headers.get('x-forwarded-for') ||
+      '';
+    await touch.call(storage, authInfo.username, ua, ip);
+    return NextResponse.json(
+      { ok: true },
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
+  } catch (err) {
+    console.error('心跳写入失败:', err);
+    // 心跳失败不影响主流程
+    return NextResponse.json(
+      { ok: false },
+      { status: 200, headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
 }

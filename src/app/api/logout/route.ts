@@ -1,8 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-import { markUserOffline } from '@/lib/activity';
 import { ADMIN_GATE_COOKIE } from '@/lib/adminGate';
-import { getAuthInfoFromCookie } from '@/lib/auth';
 
 export const runtime = 'edge';
 
@@ -14,7 +12,6 @@ export const runtime = 'edge';
  *    只清 auth 会留下门禁 Cookie，同一浏览器上换个人仍能直接进后台，属于越权隐患。
  * 2. 响应禁止缓存，避免「退出后按后退 / 刷新」拿到浏览器缓存的已登录页面。
  * 3. 幂等：未登录时调用同样返回 200，前端可以无脑调用（重复退出不报错）。
- * 4. ★ 同时把该用户标记为**离线**（在线状态：登录=上线、退出=下线，实时反映）。
  *
  * 注意：删除 Cookie 时必须与下发时的 name + path 一致（此处都是 path=/），
  * 否则浏览器不会删掉它。httpOnly / secure 属性不一致不影响删除。
@@ -26,11 +23,7 @@ const CLEAR_COOKIES: Array<{ name: string; httpOnly: boolean }> = [
   { name: ADMIN_GATE_COOKIE, httpOnly: true }, // 后台门禁
 ];
 
-export async function POST(request: NextRequest) {
-  // 先把用户名读出来（下面会把 Cookie 清掉），用于标记离线
-  const authInfo = getAuthInfoFromCookie(request);
-  await markUserOffline(authInfo?.username);
-
+export async function POST() {
   const response = NextResponse.json(
     { ok: true },
     {

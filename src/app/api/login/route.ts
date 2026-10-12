@@ -1,7 +1,6 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
-import { markUserActive } from '@/lib/activity';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
@@ -118,12 +117,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 数据库 / redis 模式——校验用户名并尝试连接数据库
-    const { username, password, context } = await req.json();
-
-    // 「后台登录」识别：前端从 /login?redirect=/admin 进来时会带上 context='admin'。
-    // 这种情况不算「在线使用」—— 后台管理不是观看行为，站长进后台不应出现在在线列表里。
-    // 手机 App（Selene）与网站前台登录都不带该标记，照常算在线。
-    const fromAdminConsole = context === 'admin';
+    const { username, password } = await req.json();
 
     if (!username || typeof username !== 'string') {
       return NextResponse.json({ error: '用户名不能为空' }, { status: 400 });
@@ -150,10 +144,6 @@ export async function POST(req: NextRequest) {
         httpOnly: false, // PWA 需要客户端可访问
         secure: false, // 根据协议自动设置
       });
-
-      // ★ 登录成功即视为「上线」（App 与网页共用本接口，App 也走这里）
-      // 例外：从后台入口登录 → 不算在线（见 fromAdminConsole 说明）
-      if (!fromAdminConsole) await markUserActive(username, req);
 
       return response;
     } else if (username === process.env.USERNAME) {
@@ -189,10 +179,6 @@ export async function POST(req: NextRequest) {
         httpOnly: false, // PWA 需要客户端可访问
         secure: false, // 根据协议自动设置
       });
-
-      // ★ 登录成功即视为「上线」
-      // 例外：从后台入口登录 → 不算在线（见 fromAdminConsole 说明）
-      if (!fromAdminConsole) await markUserActive(username, req);
 
       return response;
     } catch (err) {

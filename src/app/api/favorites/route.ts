@@ -2,7 +2,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { markUserActive } from '@/lib/activity';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { Favorite } from '@/lib/types';
@@ -63,9 +62,6 @@ export async function POST(request: NextRequest) {
     if (!authInfo || !authInfo.username) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    // ★ 收藏 = 真实使用，顺带刷新在线状态
-    await markUserActive(authInfo.username, request);
 
     const body = await request.json();
     const { key, favorite }: { key: string; favorite: Favorite } = body;
