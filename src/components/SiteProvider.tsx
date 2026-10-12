@@ -1,7 +1,6 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
-import { createContext, ReactNode, useContext, useEffect, useRef } from 'react';
+import { createContext, ReactNode, useContext, useEffect } from 'react';
 
 const SiteContext = createContext<{ siteName: string; announcement?: string }>({
   // 默认值
@@ -17,18 +16,15 @@ export const useSite = () => useContext(SiteContext);
  *
  * 上线（前端负责）
  *   - 打开站点 / App 页面（进入可见状态时上报一次）
- *   - **站内换页**（App Router 的前端路由跳转，如首页→详情→播放）
- *     注：以前只在首次加载时上报一次，导致「进去只逛不播」的人 5 分钟后被误判离线，
- *     所以这里补上「换页即刷新」。仍然是一次性事件，没有定时器。
  * 上线（服务端负责，见 src/lib/activity.ts）
  *   - 登录成功 /api/login、播放进度 /api/playrecords、收藏 /api/favorites、搜索 /api/searchhistory
  * 下线
  *   - 关闭**最后一个**标签页 → sendBeacon 上报下线
  *   - 退出登录 → /api/logout 服务端清除
- *   - 兜底：超过后端窗口（当前 5 分钟）没有任何活动 → 视为离线
+ *   - 兜底：超过后端窗口（30 分钟）没有任何活动 → 视为离线
  *
- * 为什么不用定时器：以前每 60 秒发一次请求，既费额度、又会让"只是开着页面"被误判在线。
- * 现在只有真实的打开 / 换页 / 操作才算在线 —— 更准，也更省。
+ * 为什么不用定时器：以前每 60 秒发一次请求，既费额度、又会让"只是开着后台页"被误判在线。
+ * 现在只有真实的打开 / 操作才算在线 —— 更准，也更省。
  */
 
 /** 该路径下的停留是否算「在使用本站」（后台页、登录页不算） */
@@ -77,37 +73,35 @@ export function SiteProvider({
   siteName: string;
   announcement?: string;
 }) {
-  const pathname = usePathname();
-  const lastPathRef = useRef<string | null>(null);
-
-  /** 上报一次「在使用本站」。三重门禁：已登录 + 前台可见 + 非后台/登录页。 */
-  const reportOnline = () => {
+  useEffect(() => {
     if (typeof document === 'undefined') return;
     if (!document.cookie.includes('auth=')) return;
-    if (document.visibilityState !== 'visible') return;
     if (!isUsagePath(window.location.pathname)) return;
-    fetch('/api/heartbeat', { method: 'POST', cache: 'no-store' }).catch(() => {
-      // 网络异常忽略：后端兜底窗口仍会正常工作
-    });
-  };
 
-  // ---------- 首次加载 + 每次站内换页 → 各上报一次（仍无定时器） ----------
-  useEffect(() => {
-    if (lastPathRef.current === pathname) return;
-    lastPathRef.current = pathname;
-    reportOnline();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    if (!document.cookie.includes('auth=')) return;
-
-    // 从后台切回前台 → 视为一次使用
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') reportOnline();
+    // ---------- 上线：进入可见状态时上报一次（仅一次，无定时器） ----------
+    let reported = false;
+    const reportOnline = () => {
+      if (reported) return;
+      reported = true;
+      fetch('/api/heartbeat', { method: 'POST', cache: 'no-store' }).catch(
+        () => {
+          // 网络异常忽略：兜底窗口仍会正常工作
+        }
+      );
     };
-    document.addEventListener('visibilitychange', onVisible);
+
+    if (document.visibilityState === 'visible') {
+      reportOnline();
+    } else {
+      // 后台标签页打开：等用户真正看到时再上报一次
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') {
+          document.removeEventListener('visibilitychange', onVisible);
+          reportOnline();
+        }
+      };
+      document.addEventListener('visibilitychange', onVisible);
+    }
 
     // ---------- 下线：关闭最后一个标签页时上报 ----------
     writeTabs(readTabs() + 1);
@@ -134,10 +128,8 @@ export function SiteProvider({
 
     window.addEventListener('pagehide', onPageHide);
     return () => {
-      document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('pagehide', onPageHide);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
