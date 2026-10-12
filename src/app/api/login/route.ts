@@ -1,6 +1,7 @@
 /* eslint-disable no-console,@typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
 
+import { markUserActive } from '@/lib/activity';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
@@ -145,6 +146,9 @@ export async function POST(req: NextRequest) {
         secure: false, // 根据协议自动设置
       });
 
+      // ★ 登录成功即视为「上线」（App 与网页共用本接口，App 也走这里）
+      await markUserActive(username, req);
+
       return response;
     } else if (username === process.env.USERNAME) {
       return NextResponse.json({ error: '用户名或密码错误' }, { status: 401 });
@@ -179,6 +183,9 @@ export async function POST(req: NextRequest) {
         httpOnly: false, // PWA 需要客户端可访问
         secure: false, // 根据协议自动设置
       });
+
+      // ★ 登录成功即视为「上线」
+      await markUserActive(username, req);
 
       return response;
     } catch (err) {

@@ -11,21 +11,57 @@ const SiteContext = createContext<{ siteName: string; announcement?: string }>({
 
 export const useSite = () => useContext(SiteContext);
 
-/** 心跳间隔（毫秒）。60 秒足够判断"在线"，也不会明显消耗请求额度。 */
-const HEARTBEAT_INTERVAL_MS = 60 * 1000;
-
 /**
- * 该路径下的停留是否算「在使用本站」。
+ * 在线状态（2026-10-12 重构：**事件驱动，不再定时轮询**）
  *
- * 后台管理页（/admin）**不算** —— 只有在前台看片 / 搜索（含手机 App 走的是同样的接口）
- * 才算在线。否则"进后台看了看设置"会被误判成在线，导致在线人数虚高。
- * 登录页同样不计（本来就还没登录）。
+ * 上线（前端负责）
+ *   - 打开站点 / App 页面（进入可见状态时上报一次）
+ * 上线（服务端负责，见 src/lib/activity.ts）
+ *   - 登录成功 /api/login、播放进度 /api/playrecords、收藏 /api/favorites、搜索 /api/searchhistory
+ * 下线
+ *   - 关闭**最后一个**标签页 → sendBeacon 上报下线
+ *   - 退出登录 → /api/logout 服务端清除
+ *   - 兜底：超过后端窗口（30 分钟）没有任何活动 → 视为离线
+ *
+ * 为什么不用定时器：以前每 60 秒发一次请求，既费额度、又会让"只是开着后台页"被误判在线。
+ * 现在只有真实的打开 / 操作才算在线 —— 更准，也更省。
  */
+
+/** 该路径下的停留是否算「在使用本站」（后台页、登录页不算） */
 function isUsagePath(pathname: string): boolean {
   if (!pathname) return false;
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return false;
   if (pathname === '/login' || pathname.startsWith('/login/')) return false;
   return true;
+}
+
+/** 多标签页计数用的 localStorage key（关闭最后一个标签页才上报离线） */
+const TAB_COUNT_KEY = 'moontv_open_tabs';
+/** 计数超过该时长未更新即视为陈旧（上次异常退出的残留），重置掉 */
+const TAB_COUNT_STALE_MS = 10 * 60 * 1000;
+
+function readTabs(): number {
+  try {
+    const raw = localStorage.getItem(TAB_COUNT_KEY);
+    if (!raw) return 0;
+    const obj = JSON.parse(raw) as { n?: number; ts?: number };
+    if (typeof obj?.n !== 'number' || typeof obj?.ts !== 'number') return 0;
+    if (Date.now() - obj.ts > TAB_COUNT_STALE_MS) return 0;
+    return Math.max(0, obj.n);
+  } catch {
+    return 0;
+  }
+}
+
+function writeTabs(n: number): void {
+  try {
+    localStorage.setItem(
+      TAB_COUNT_KEY,
+      JSON.stringify({ n: Math.max(0, n), ts: Date.now() })
+    );
+  } catch {
+    // 隐私模式下 localStorage 可能不可用 —— 忽略即可
+  }
 }
 
 export function SiteProvider({
@@ -37,55 +73,63 @@ export function SiteProvider({
   siteName: string;
   announcement?: string;
 }) {
-  /**
-   * 心跳：让后台能统计「谁在线」。
-   * - 只在已登录（存在 auth cookie）时才有意义；登录页 / 后台页不发；
-   * - 每一拍都重新读当前路径 —— 用户在同一个标签页里从后台切回前台后，
-   *   无需重新挂载组件就会自动恢复心跳；
-   * - 只在页面可见时发送（切到后台 / 锁屏自动跳过）；
-   * - 收到 401（未登录 / 会话失效）或 auth cookie 消失（已退出登录）立即停止。
-   */
   useEffect(() => {
     if (typeof document === 'undefined') return;
     if (!document.cookie.includes('auth=')) return;
+    if (!isUsagePath(window.location.pathname)) return;
 
-    let stopped = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    const stop = () => {
-      stopped = true;
-      if (timer) clearInterval(timer);
+    // ---------- 上线：进入可见状态时上报一次（仅一次，无定时器） ----------
+    let reported = false;
+    const reportOnline = () => {
+      if (reported) return;
+      reported = true;
+      fetch('/api/heartbeat', { method: 'POST', cache: 'no-store' }).catch(
+        () => {
+          // 网络异常忽略：兜底窗口仍会正常工作
+        }
+      );
     };
 
-    const beat = async () => {
-      if (stopped) return;
-      // 已退出登录（cookie 被清）：停止，避免继续被算作在线
-      if (!document.cookie.includes('auth=')) {
-        stop();
-        return;
-      }
-      // 后台 / 登录页不算使用
-      if (!isUsagePath(window.location.pathname)) return;
-      // 页面不可见（切标签页、锁屏）跳过
-      if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState === 'visible') {
+      reportOnline();
+    } else {
+      // 后台标签页打开：等用户真正看到时再上报一次
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') {
+          document.removeEventListener('visibilitychange', onVisible);
+          reportOnline();
+        }
+      };
+      document.addEventListener('visibilitychange', onVisible);
+    }
 
+    // ---------- 下线：关闭最后一个标签页时上报 ----------
+    writeTabs(readTabs() + 1);
+
+    const onPageHide = () => {
+      const remain = Math.max(0, readTabs() - 1);
+      writeTabs(remain);
+      if (remain > 0) return; // 还有别的标签页开着 → 仍算在线
+
+      const url = '/api/heartbeat?offline=1';
       try {
-        const res = await fetch('/api/heartbeat', {
-          method: 'POST',
-          cache: 'no-store',
-        });
-        if (res.status === 401) {
-          stop();
+        if (navigator.sendBeacon) {
+          // sendBeacon 会带上 Cookie，且在页面卸载后仍能发出
+          navigator.sendBeacon(url);
+        } else {
+          fetch(url, { method: 'POST', keepalive: true }).catch(() => {
+            // 忽略：兜底窗口会处理
+          });
         }
       } catch {
-        // 网络异常忽略，下一轮再试
+        // 忽略：兜底窗口会处理
       }
     };
 
-    beat();
-    timer = setInterval(beat, HEARTBEAT_INTERVAL_MS);
-
-    return () => stop();
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+    };
   }, []);
 
   return (

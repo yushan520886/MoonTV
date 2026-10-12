@@ -1255,7 +1255,8 @@ const UserActivityConfig = ({ role }: UserActivityConfigProps) => {
       {/* 顶部统计 */}
       <div className='flex items-center justify-between'>
         <div className='text-sm text-gray-500 dark:text-gray-400'>
-          每 2 分钟内有心跳即视为「在线」；数据来自播放记录 / 收藏 / 搜索历史。
+          登录成功或打开网站即视为「在线」；看片（播放进度）/ 收藏 / 搜索会持续保持在线；
+          退出登录或关闭最后一个页面立即转为离线。后台页面的停留不算在线。
         </div>
         <button
           onClick={load}

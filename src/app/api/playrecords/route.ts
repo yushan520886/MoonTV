@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+import { markUserActive } from '@/lib/activity';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { PlayRecord } from '@/lib/types';
@@ -34,6 +35,10 @@ export async function POST(request: NextRequest) {
     if (!authInfo || !authInfo.username) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // ★ 写播放进度 = 用户正在使用本站（看片时播放器会周期性调用本接口）
+    //   在线状态改为事件驱动后，这里就是"正在看片"的保持在线信号。
+    await markUserActive(authInfo.username, request);
 
     const body = await request.json();
     const { key, record }: { key: string; record: PlayRecord } = body;
