@@ -46,6 +46,9 @@ function LoginPageClient() {
         body: JSON.stringify({
           password,
           ...(shouldAskUsername ? { username } : {}),
+          // 从后台入口进来的登录不算「在线使用」：服务端据此跳过在线标记，
+          // 这样站长登后台不会被后台的在线列表算作"有人在看"
+          ...(isAdminLogin ? { context: 'admin' } : {}),
         }),
       });
 
