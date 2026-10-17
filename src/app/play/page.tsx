@@ -137,6 +137,70 @@ function PlayPageClient() {
   const [isEpisodeSelectorCollapsed, setIsEpisodeSelectorCollapsed] =
     useState(false);
 
+  // ---------- 播放器内浮层（标题 / 选集） ----------
+  /** 控制栏是否可见（由 ArtPlayer 的 control 事件驱动），用来同步标题浮层 */
+  const [controlsVisible, setControlsVisible] = useState(true);
+  /** 播放器内的选集弹层 */
+  const [episodeSheetOpen, setEpisodeSheetOpen] = useState(false);
+  /** 挂在播放器容器里的标题节点（放容器内，全屏时也在） */
+  const playerTitleRef = useRef<HTMLDivElement | null>(null);
+
+  /** 同步标题浮层的文字与显隐 */
+  const syncPlayerTitle = () => {
+    const node = playerTitleRef.current;
+    if (!node) return;
+    node.textContent =
+      totalEpisodes > 1
+        ? `${videoTitle || '影片标题'}  第${currentEpisodeIndex + 1}集`
+        : videoTitle || '影片标题';
+    node.style.opacity = controlsVisible && !episodeSheetOpen ? '1' : '0';
+  };
+
+  useEffect(() => {
+    syncPlayerTitle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    videoTitle,
+    currentEpisodeIndex,
+    totalEpisodes,
+    controlsVisible,
+    episodeSheetOpen,
+  ]);
+
+  /** 把标题浮层挂进播放器容器内部（全屏时也在，不会被裁掉） */
+  const mountPlayerTitle = () => {
+    const host = artRef.current;
+    if (!host) return;
+    const old = host.querySelector('[data-moontv-title]');
+    if (old) old.remove();
+
+    const node = document.createElement('div');
+    node.setAttribute('data-moontv-title', '1');
+    node.style.cssText = [
+      'position:absolute',
+      'top:0',
+      'left:0',
+      'right:0',
+      'z-index:20',
+      'padding:12px 16px 26px',
+      'color:#fff',
+      'font-size:15px',
+      'font-weight:500',
+      'line-height:1.4',
+      'white-space:nowrap',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+      'text-shadow:0 1px 3px rgba(0,0,0,.65)',
+      'background:linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0))',
+      'pointer-events:none',
+      'transition:opacity .25s ease',
+      'opacity:1',
+    ].join(';');
+    host.appendChild(node);
+    playerTitleRef.current = node;
+    syncPlayerTitle();
+  };
+
   // 换源加载状态
   const [isVideoLoading, setIsVideoLoading] = useState(true);
   const [videoLoadingStage, setVideoLoadingStage] = useState<
@@ -1143,12 +1207,31 @@ function PlayPageClient() {
               handleNextEpisode();
             },
           },
+          {
+            position: 'left',
+            index: 14,
+            html: '<i class="art-icon flex"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></i>',
+            tooltip: '选集',
+            click: function () {
+              setEpisodeSheetOpen((open) => !open);
+            },
+          },
         ],
       });
 
+      // 播放器内标题浮层（挂进容器内部，全屏时也在）
+      mountPlayerTitle();
+
       // 监听播放器事件
       artPlayerRef.current.on('ready', () => {
+        // ArtPlayer 初始化可能会整理容器，这里再挂一次确保浮层不丢
+        mountPlayerTitle();
         setError(null);
+      });
+
+      // 控制栏显示/隐藏 → 同步标题浮层的显隐
+      artPlayerRef.current.on('control', (state: boolean) => {
+        setControlsVisible(!!state);
       });
 
       artPlayerRef.current.on('video:volumechange', () => {
@@ -1472,6 +1555,63 @@ function PlayPageClient() {
                   ref={artRef}
                   className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg'
                 ></div>
+
+                {/* 播放器内选集浮层 */}
+                {episodeSheetOpen && totalEpisodes > 0 && (
+                  <div
+                    className='absolute inset-0 z-30 flex flex-col justify-end overflow-hidden rounded-xl'
+                    onClick={() => setEpisodeSheetOpen(false)}
+                  >
+                    <div className='absolute inset-0 bg-black/50' />
+                    <div
+                      className='relative flex max-h-[72%] flex-col rounded-t-2xl bg-zinc-900/95 text-white shadow-2xl'
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className='flex items-center justify-between border-b border-white/10 px-4 py-3'>
+                        <span className='text-sm font-medium'>选集</span>
+                        <span className='text-xs text-white/50'>
+                          共 {totalEpisodes} 集 · 当前第 {currentEpisodeIndex + 1}{' '}
+                          集
+                        </span>
+                        <button
+                          onClick={() => setEpisodeSheetOpen(false)}
+                          className='rounded p-1 text-white/60 transition-colors hover:bg-white/10 hover:text-white'
+                          aria-label='关闭选集'
+                        >
+                          <svg
+                            width='16'
+                            height='16'
+                            viewBox='0 0 24 24'
+                            fill='none'
+                            stroke='currentColor'
+                            strokeWidth='2'
+                            strokeLinecap='round'
+                          >
+                            <path d='M6 6l12 12M18 6L6 18' />
+                          </svg>
+                        </button>
+                      </div>
+                      <div className='grid grid-cols-6 gap-2 overflow-y-auto p-4 sm:grid-cols-8'>
+                        {Array.from({ length: totalEpisodes }, (_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              handleEpisodeChange(i);
+                              setEpisodeSheetOpen(false);
+                            }}
+                            className={`rounded-lg py-2 text-sm transition-colors ${
+                              i === currentEpisodeIndex
+                                ? 'bg-green-600 font-medium text-white'
+                                : 'bg-white/10 text-white/80 hover:bg-white/20'
+                            }`}
+                          >
+                            {i + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 换源加载蒙层 */}
                 {isVideoLoading && (
